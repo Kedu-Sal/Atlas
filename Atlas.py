@@ -225,7 +225,7 @@ st.markdown("---")
 date_creation = datetime.now().strftime("%d/%m/%Y")
 st.markdown(
     f"<div style='text-align: center; color: gray; font-size: 14px;'>"
-    f"Développé par <b>OUMAR HASSANA Etudiant en Génie Civil</b> | Contact : <b>697669408 haoumar@univ-catho-sjd.com</b> | Créé le : <b>{date_creation}</b>"
+    f"Développé par <b>OUMAR HASSANA Etudiant en Génie Civil</b> | Contact : <b>haoumar@univ-catho-sjd.com</b> | Créé le : <b>{date_creation}</b>"
     f"</div>",
     unsafe_allow_html=True
 )
