@@ -1,9 +1,9 @@
 import streamlit as st
 
-# Crée le fichier credentials.json automatiquement à partir des secrets Streamlit
 if "GOOGLE_CREDENTIALS" in st.secrets:
   with open("credentials.json", "w") as f:
     f.write(st.secrets["GOOGLE_CREDENTIALS"])
+
 
 import os
 import streamlit as st
