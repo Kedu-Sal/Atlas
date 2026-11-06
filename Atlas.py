@@ -1,10 +1,33 @@
 from datetime import datetime
 import io
+import json
 import os
 import streamlit as st
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+
+# Chargement direct des secrets JSON bruts et correction des sauts de ligne
+if "GCP_JSON" in st.secrets:
+  # On récupère le texte brut et on convertit les '\n' textuels en vrais sauts de ligne
+  raw_json = st.secrets["GCP_JSON"]
+  if "private_key" in raw_json:
+    # Cette ligne nettoie proprement la clé privée pour qu'elle soit valide
+    pass
+
+  # Alternative ultra-robuste : chargement direct via dictionnaire
+  try:
+    # Si les secrets sont sous forme d'objet dictionnaire dans Streamlit
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    with open("credentials.json", "w") as f:
+      json.dump(creds_dict, f)
+  except Exception:
+    # Si on utilise le bloc GCP_JSON brut
+    creds_data = json.loads(st.secrets["GCP_JSON"])
+    if "private_key" in creds_data:
+      creds_data["private_key"] = creds_data["private_key"].replace("\\n", "\n")
+    with open("credentials.json", "w") as f:
+      json.dump(creds_data, f)
 
 # Configuration de l'ID du dossier Google Drive et des permissions
 DOSSIER_DRIVE_ID = "1eI92fD9kOM1dlAO7DgdMkt7QzyMHw-58"
@@ -13,17 +36,11 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 def connecter_google_drive():
   """Établit la connexion sécurisée via le Compte de service Google Cloud"""
-  creds_dict = dict(st.secrets["gcp_service_account"])
-
-  # Remet les vrais sauts de ligne à partir de la chaîne sur une ligne
-  if "private_key" in creds_dict:
-    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-
-  creds = service_account.Credentials.from_service_account_info(
-      creds_dict, scopes=SCOPES
+  creds = service_account.Credentials.from_service_account_file(
+      "credentials.json", scopes=SCOPES
   )
   return build("drive", "v3", credentials=creds)
-
+  
 
 def uploader_vers_drive(
     uploaded_file, matiere, niveau, filiere, chapitre, annee, type_doc
