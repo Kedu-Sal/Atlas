@@ -1,16 +1,10 @@
 from datetime import datetime
 import io
-import json
 import os
 import streamlit as st
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-
-# Chargement direct des secrets JSON bruts
-if "GCP_JSON" in st.secrets:
-  with open("credentials.json", "w") as f:
-    f.write(st.secrets["GCP_JSON"])
 
 # Configuration de l'ID du dossier Google Drive et des permissions
 DOSSIER_DRIVE_ID = "1eI92fD9kOM1dlAO7DgdMkt7QzyMHw-58"
@@ -19,8 +13,14 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 def connecter_google_drive():
   """Établit la connexion sécurisée via le Compte de service Google Cloud"""
-  creds = service_account.Credentials.from_service_account_file(
-      "credentials.json", scopes=SCOPES
+  creds_dict = dict(st.secrets["gcp_service_account"])
+
+  # Remet les vrais sauts de ligne à partir de la chaîne sur une ligne
+  if "private_key" in creds_dict:
+    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
+  creds = service_account.Credentials.from_service_account_info(
+      creds_dict, scopes=SCOPES
   )
   return build("drive", "v3", credentials=creds)
 
