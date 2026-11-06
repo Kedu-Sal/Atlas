@@ -21,7 +21,7 @@ def connecter_google_drive():
       token_uri="https://oauth2.googleapis.com/token",
       scopes=SCOPES,
   )
-  return build("drive", "v3", credentils=creds, cache_discovery=False)
+  return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 def uploader_vers_drive(
     uploaded_file, matiere, niveau, filiere, chapitre, annee, type_doc
