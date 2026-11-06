@@ -1,10 +1,7 @@
 from datetime import datetime
 import io
-import json
-import re
-import textwrap
 import streamlit as st
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
@@ -12,40 +9,19 @@ DOSSIER_DRIVE_ID = "1eI92fD9kOM1dlAO7DgdMkt7QzyMHw-58"
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
-def nettoyer_cle_privee(cle):
-  """Reconstruit un PEM propre, quel que soit l'état de la chaîne reçue."""
-  cle = cle.replace("\\\\n", "\n").replace("\\n", "\n")
-  corps = re.sub(r"-----[A-Z ]+-----|\s", "", cle)
-  return (
-      "-----BEGIN PRIVATE KEY-----\n"
-      + "\n".join(textwrap.wrap(corps, 64))
-      + "\n-----END PRIVATE KEY-----\n"
-  )
-
-
-def charger_infos_compte():
-  """Lit les identifiants depuis les secrets (GCP_JSON ou gcp_service_account)."""
-  if "GCP_JSON" in st.secrets:
-    brut = st.secrets["GCP_JSON"]
-    infos = json.loads(brut) if isinstance(brut, str) else dict(brut)
-  elif "gcp_service_account" in st.secrets:
-    infos = dict(st.secrets["gcp_service_account"])
-  else:
-    raise RuntimeError(
-        "Secrets introuvables : ajoute GCP_JSON dans les secrets Streamlit."
-    )
-  infos["private_key"] = nettoyer_cle_privee(infos["private_key"])
-  return infos
-
-
 @st.cache_resource
 def connecter_google_drive():
-  """Établit la connexion via le Compte de service Google Cloud"""
-  creds = service_account.Credentials.from_service_account_info(
-      charger_infos_compte(), scopes=SCOPES
+  """Connexion via le compte Google du propriétaire du dossier"""
+  o = st.secrets["oauth"]
+  creds = Credentials(
+      token=None,
+      refresh_token=o["refresh_token"],
+      client_id=o["client_id"],
+      client_secret=o["client_secret"],
+      token_uri="https://oauth2.googleapis.com/token",
+      scopes=SCOPES,
   )
-  return build("drive", "v3", credentials=creds, cache_discovery=False)
-
+  return build("drive", "v3", credentils=creds, cache_discovery=False)
 
 def uploader_vers_drive(
     uploaded_file, matiere, niveau, filiere, chapitre, annee, type_doc
