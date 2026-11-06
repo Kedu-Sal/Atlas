@@ -1,46 +1,51 @@
 from datetime import datetime
 import io
 import json
-import os
+import re
+import textwrap
 import streamlit as st
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-# Chargement direct des secrets JSON bruts et correction des sauts de ligne
-if "GCP_JSON" in st.secrets:
-  # On récupère le texte brut et on convertit les '\n' textuels en vrais sauts de ligne
-  raw_json = st.secrets["GCP_JSON"]
-  if "private_key" in raw_json:
-    # Cette ligne nettoie proprement la clé privée pour qu'elle soit valide
-    pass
-
-  # Alternative ultra-robuste : chargement direct via dictionnaire
-  try:
-    # Si les secrets sont sous forme d'objet dictionnaire dans Streamlit
-    creds_dict = dict(st.secrets["gcp_service_account"])
-    with open("credentials.json", "w") as f:
-      json.dump(creds_dict, f)
-  except Exception:
-    # Si on utilise le bloc GCP_JSON brut
-    creds_data = json.loads(st.secrets["GCP_JSON"])
-    if "private_key" in creds_data:
-      creds_data["private_key"] = creds_data["private_key"].replace("\\n", "\n")
-    with open("credentials.json", "w") as f:
-      json.dump(creds_data, f)
-
-# Configuration de l'ID du dossier Google Drive et des permissions
 DOSSIER_DRIVE_ID = "1eI92fD9kOM1dlAO7DgdMkt7QzyMHw-58"
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
-def connecter_google_drive():
-  """Établit la connexion sécurisée via le Compte de service Google Cloud"""
-  creds = service_account.Credentials.from_service_account_file(
-      "credentials.json", scopes=SCOPES
+def nettoyer_cle_privee(cle):
+  """Reconstruit un PEM propre, quel que soit l'état de la chaîne reçue."""
+  cle = cle.replace("\\\\n", "\n").replace("\\n", "\n")
+  corps = re.sub(r"-----[A-Z ]+-----|\s", "", cle)
+  return (
+      "-----BEGIN PRIVATE KEY-----\n"
+      + "\n".join(textwrap.wrap(corps, 64))
+      + "\n-----END PRIVATE KEY-----\n"
   )
-  return build("drive", "v3", credentials=creds)
-  
+
+
+def charger_infos_compte():
+  """Lit les identifiants depuis les secrets (GCP_JSON ou gcp_service_account)."""
+  if "GCP_JSON" in st.secrets:
+    brut = st.secrets["GCP_JSON"]
+    infos = json.loads(brut) if isinstance(brut, str) else dict(brut)
+  elif "gcp_service_account" in st.secrets:
+    infos = dict(st.secrets["gcp_service_account"])
+  else:
+    raise RuntimeError(
+        "Secrets introuvables : ajoute GCP_JSON dans les secrets Streamlit."
+    )
+  infos["private_key"] = nettoyer_cle_privee(infos["private_key"])
+  return infos
+
+
+@st.cache_resource
+def connecter_google_drive():
+  """Établit la connexion via le Compte de service Google Cloud"""
+  creds = service_account.Credentials.from_service_account_info(
+      charger_infos_compte(), scopes=SCOPES
+  )
+  return build("drive", "v3", credentials=creds, cache_discovery=False)
+
 
 def uploader_vers_drive(
     uploaded_file, matiere, niveau, filiere, chapitre, annee, type_doc
@@ -62,7 +67,12 @@ def uploader_vers_drive(
 
   file = (
       service.files()
-      .create(body=metadata, media_body=media, fields="id, webViewLink")
+      .create(
+          body=metadata,
+          media_body=media,
+          fields="id, webViewLink",
+          supportsAllDrives=True,
+      )
       .execute()
   )
 
@@ -73,14 +83,27 @@ def lister_fichiers_drive():
   """Récupère la liste de tous les fichiers du dossier Google Drive"""
   service = connecter_google_drive()
   query = f"'{DOSSIER_DRIVE_ID}' in parents and trashed = false"
-  results = (
-      service.files()
-      .list(
-          q=query, pageSize=100, fields="files(id, name, webViewLink, createdTime)"
-      )
-      .execute()
-  )
-  return results.get("files", [])
+  fichiers = []
+  page_token = None
+  while True:
+    resultat = (
+        service.files()
+        .list(
+            q=query,
+            pageSize=100,
+            pageToken=page_token,
+            fields="nextPageToken, files(id, name, webViewLink, createdTime)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            corpora="allDrives",
+        )
+        .execute()
+    )
+    fichiers.extend(resultat.get("files", []))
+    page_token = resultat.get("nextPageToken")
+    if not page_token:
+      break
+  return fichiers
 
 
 # Configuration de la page Streamlit
@@ -176,7 +199,7 @@ if menu == "📤 Partager un document":
 
         st.success(
             f"{len(uploaded_files)} document(s) uploadé(s) et sauvegardé(s) avec"
-            " succès sur votre Drive !"
+            " succès sur Google Drive !"
         )
         st.markdown("### Accès direct aux fichiers envoyés :")
         for nom_f, lien_f in liens_generes:
