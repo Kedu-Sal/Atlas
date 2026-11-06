@@ -1,9 +1,10 @@
+import json
 import streamlit as st
 
-if "GOOGLE_CREDENTIALS" in st.secrets:
+if "gcp_service_account" in st.secrets:
+  creds_dict = dict(st.secrets["gcp_service_account"])
   with open("credentials.json", "w") as f:
-    f.write(st.secrets["GOOGLE_CREDENTIALS"])
-
+    json.dump(creds_dict, f)
 
 import os
 import streamlit as st
