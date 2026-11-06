@@ -7,11 +7,10 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-# Chargement automatique des secrets et création en mémoire de credentials.json si besoin
-if "gcp_service_account" in st.secrets:
-  creds_dict = dict(st.secrets["gcp_service_account"])
+# Chargement direct des secrets JSON bruts
+if "GCP_JSON" in st.secrets:
   with open("credentials.json", "w") as f:
-    json.dump(creds_dict, f)
+    f.write(st.secrets["GCP_JSON"])
 
 # Configuration de l'ID du dossier Google Drive et des permissions
 DOSSIER_DRIVE_ID = "1eI92fD9kOM1dlAO7DgdMkt7QzyMHw-58"
@@ -20,14 +19,8 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 def connecter_google_drive():
   """Établit la connexion sécurisée via le Compte de service Google Cloud"""
-  creds_dict = dict(st.secrets["gcp_service_account"])
-
-  # Corrige proprement les sauts de ligne de la clé privée pour éviter les erreurs de format
-  if "private_key" in creds_dict:
-    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-
-  creds = service_account.Credentials.from_service_account_info(
-      creds_dict, scopes=SCOPES
+  creds = service_account.Credentials.from_service_account_file(
+      "credentials.json", scopes=SCOPES
   )
   return build("drive", "v3", credentials=creds)
 
@@ -40,7 +33,6 @@ def uploader_vers_drive(
   part_filiere = f"_{filiere}" if filiere else ""
   part_chapitre = f"_{chapitre}" if chapitre.strip() else ""
 
-  # Format de nom de fichier professionnel et propre
   nom_fichier = f"[{niveau}]{part_filiere}_{matiere}{part_chapitre}_{annee}_{type_doc}_{uploaded_file.name}"
 
   metadata = {"name": nom_fichier, "parents": [DOSSIER_DRIVE_ID]}
