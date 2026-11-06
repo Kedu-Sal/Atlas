@@ -2,13 +2,12 @@ from datetime import datetime
 import io
 import json
 import os
-import pickle
 import streamlit as st
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-# 1. Chargement automatique des secrets et création en mémoire de credentials.json si besoin
+# Chargement automatique des secrets et création en mémoire de credentials.json si besoin
 if "gcp_service_account" in st.secrets:
   creds_dict = dict(st.secrets["gcp_service_account"])
   with open("credentials.json", "w") as f:
@@ -22,6 +21,11 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 def connecter_google_drive():
   """Établit la connexion sécurisée via le Compte de service Google Cloud"""
   creds_dict = dict(st.secrets["gcp_service_account"])
+
+  # Corrige proprement les sauts de ligne de la clé privée pour éviter les erreurs de format
+  if "private_key" in creds_dict:
+    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
   creds = service_account.Credentials.from_service_account_info(
       creds_dict, scopes=SCOPES
   )
@@ -135,7 +139,6 @@ if menu == "📤 Partager un document":
       ["Cours", "TD (Travaux Dirigés)", "TP (Travaux Pratiques)", "Examen / CC"],
   )
 
-  # accept_multiple_files=True permet de sélectionner plusieurs fichiers d'un coup
   uploaded_files = st.file_uploader(
       "Choisissez les fichiers PDF à téléverser (sélection multiple"
       " autorisée)",
