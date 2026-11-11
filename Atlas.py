@@ -2,11 +2,14 @@ from datetime import datetime
 import csv
 import io
 import re
+import ssl
 import streamlit as st
-st.write("🔍 TEST : Le mot de passe lu est", st.secrets.get("admin_password", "INTROUVABLE"))
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+
+# Correction pour l'erreur SSL sur Streamlit Cloud
+ssl._create_default_https_context = ssl._create_unverified_context
 
 # ==========================================
 # CONSTANTES
@@ -176,7 +179,6 @@ def uploader_vers_drive(
     part_chapitre = f"_{chapitre}" if chapitre.strip() else ""
     contributeur_clean = contributeur.strip().replace(" ", "_")
 
-    # Troncature du nom original
     nom_original = uploaded_file.name[:LONGUEUR_MAX_NOM_FICHIER]
 
     nom_fichier = _sanitize(
@@ -323,14 +325,12 @@ with st.sidebar:
     st.caption("Bibliothèque Numérique SJP")
     st.markdown("---")
 
-    # Menu de base
     options_menu = [
         "📁 Consulter les documents",
         "📤 Partager un document",
         "🏆 Contributeurs",
     ]
     
-    # Ajout conditionnel du menu maintenance
     if st.session_state["mode_admin"]:
         options_menu.append("ℹ️ Maintenance")
 
@@ -701,14 +701,12 @@ elif menu == "📁 Consulter les documents":
             st.write("") 
             bouton_secret = st.button("🔓", help="Déverrouiller l'espace admin")
 
-        # Si le mot de passe est bon
         if recherche == mot_de_passe_attendu and mot_de_passe_attendu != "":
             if not st.session_state["mode_admin"]:
                 st.session_state["mode_admin"] = True
                 st.success("🔓 Mode Administrateur activé ! L'onglet Maintenance est apparu.")
                 st.rerun()
 
-        # On vide la recherche si c'était le mot de passe pour ne pas filtrer les documents
         if recherche == mot_de_passe_attendu and mot_de_passe_attendu != "":
             recherche = ""
 
@@ -781,20 +779,9 @@ elif menu == "📁 Consulter les documents":
                     )
                     st.caption("  ·  ".join(meta_parts))
 
+                    # Lien direct vers Drive (remplace l'aperçu iframe qui plantait)
                     if f.get("webViewLink"):
-                        with st.expander("👁️ Aperçu du document"):
-                            apercu_url = (
-                                f"https://drive.google.com/file/d/"
-                                f"{f['id']}/preview"
-                            )
-                            st.markdown(
-                    f'<iframe src="{apercu_url}" '
-                    f'width="100%" height="500" '
-                    f'sandbox="allow-scripts allow-same-origin allow-popups" '
-                    f'style="border:none;border-radius:8px;">'
-                    f'</iframe>',
-                    unsafe_allow_html=True,
-                )
+                        st.markdown(f"[👁️ Ouvrir dans Google Drive]({f['webViewLink']})")
 
                 with col_action:
                     if _est_autorise():
