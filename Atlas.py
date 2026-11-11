@@ -788,12 +788,13 @@ elif menu == "📁 Consulter les documents":
                                 f"{f['id']}/preview"
                             )
                             st.markdown(
-                                f'<iframe src="{apercu_url}" '
-                                f'width="100%" height="500" '
-                                f'style="border:none;border-radius:8px;">'
-                                f'</iframe>',
-                                unsafe_allow_html=True,
-                            )
+                    f'<iframe src="{apercu_url}" '
+                    f'width="100%" height="500" '
+                    f'sandbox="allow-scripts allow-same-origin allow-popups" '
+                    f'style="border:none;border-radius:8px;">'
+                    f'</iframe>',
+                    unsafe_allow_html=True,
+                )
 
                 with col_action:
                     if _est_autorise():
