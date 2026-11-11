@@ -686,21 +686,28 @@ elif menu == "📁 Consulter les documents":
                 key="f_tri",
             )
 
-        recherche = st.text_input(
-            "🔎 Recherche libre (matière, chapitre, contributeur...)",
-            placeholder="ex: Analyse, Béton, HASSANA...",
-            key="f_recherche",
-        )
-
         # 👇 PORTE DÉROBÉE ADMIN 👇
         mot_de_passe_attendu = st.secrets.get("admin_password", "")
+        
+        col_search, col_btn = st.columns([4, 1])
+        with col_search:
+            recherche = st.text_input(
+                "🔎 Recherche libre (matière, chapitre, contributeur...)",
+                placeholder="ex: Analyse, Béton, HASSANA...",
+                key="f_recherche",
+            )
+        with col_btn:
+            st.write("") 
+            bouton_secret = st.button("🔓", help="Déverrouiller l'espace admin")
+
+        # Si le mot de passe est bon
         if recherche == mot_de_passe_attendu and mot_de_passe_attendu != "":
             if not st.session_state["mode_admin"]:
                 st.session_state["mode_admin"] = True
-                st.success("🔓 Mode Administrateur activé ! L'onglet Maintenance est apparu dans le menu.")
+                st.success("🔓 Mode Administrateur activé ! L'onglet Maintenance est apparu.")
                 st.rerun()
-        
-        # Si c'est le mot de passe, on vide la recherche pour ne pas filtrer les documents
+
+        # On vide la recherche si c'était le mot de passe pour ne pas filtrer les documents
         if recherche == mot_de_passe_attendu and mot_de_passe_attendu != "":
             recherche = ""
 
