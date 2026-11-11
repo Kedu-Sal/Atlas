@@ -3,6 +3,7 @@ import csv
 import io
 import re
 import streamlit as st
+st.write("🔍 TEST : Le mot de passe lu est", st.secrets.get("admin_password", "INTROUVABLE"))
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
