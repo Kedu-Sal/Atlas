@@ -779,8 +779,8 @@ elif menu == "📁 Consulter les documents":
                     )
                     st.caption("  ·  ".join(meta_parts))
 
-                    # Lien direct vers Drive (remplace l'aperçu iframe qui plantait)
-                    if f.get("webViewLink"):
+                    # 👇 Lien d'ouverture sécurisé (seulement si autorisé) 👇
+                    if _est_autorise() and f.get("webViewLink"):
                         st.markdown(f"[👁️ Ouvrir dans Google Drive]({f['webViewLink']})")
 
                 with col_action:
@@ -811,7 +811,8 @@ elif menu == "📁 Consulter les documents":
                             help="Partagez un document pour débloquer",
                         )
 
-                    if f.get("webViewLink"):
+                    # 👇 Lien Drive sécurisé (seulement si autorisé) 👇
+                    if _est_autorise() and f.get("webViewLink"):
                         st.markdown(
                             f"[🔗 Drive]({f['webViewLink']})",
                             unsafe_allow_html=False,
