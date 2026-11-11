@@ -3,6 +3,8 @@ import csv
 import io
 import re
 import ssl
+import smtplib
+from email.mime.text import MIMEText
 import streamlit as st
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -104,6 +106,44 @@ def _debloquer_telechargement():
 
 def _est_autorise() -> bool:
     return st.session_state.get("peut_telecharger", False)
+
+
+def envoyer_email_signalement(nom_fichier, raison, details):
+    """Envoie un email à l'admin quand un document est signalé."""
+    expediteur = st.secrets.get("email_expediteur", "")
+    mot_de_passe = st.secrets.get("email_mot_de_passe", "")
+    
+    if not expediteur or not mot_de_passe:
+        return False, "Configuration email manquante dans les secrets."
+
+    destinataire = expediteur  # L'admin se l'envoie à lui-même
+    sujet = f"🚨 ALERTE ATLAS : Signalement de document"
+    
+    corps = f"""
+    Un document a été signalé sur la plateforme Atlas.
+    
+    Détails du signalement :
+    ------------------------
+    Fichier concerné : {nom_fichier}
+    Raison : {raison}
+    Détails (optionnel) : {details}
+    Date : {datetime.now().strftime("%d/%m/%Y à %H:%M")}
+    
+    Rendez-vous sur votre Google Drive pour vérifier ce document.
+    """
+
+    msg = MIMEText(corps, "plain", "utf-8")
+    msg["Subject"] = sujet
+    msg["From"] = expediteur
+    msg["To"] = destinataire
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(expediteur, mot_de_passe)
+            server.sendmail(expediteur, destinataire, msg.as_string())
+        return True, "Email envoyé avec succès."
+    except Exception as e:
+        return False, str(e)
 
 
 # ==========================================
@@ -779,69 +819,76 @@ elif menu == "📁 Consulter les documents":
                     )
                     st.caption("  ·  ".join(meta_parts))
 
-                    # 👇 Lien d'ouverture sécurisé (seulement si autorisé) 👇
-                    if _est_autorise() and f.get("webViewLink"):
-                        st.markdown(f"[👁️ Ouvrir dans Google Drive]({f['webViewLink']})")
-
                 with col_action:
-                    if _est_autorise():
-                        try:
-                            contenu = telecharger_contenu(service, f["id"])
-                            file_name = (
-                                f["name"]
-                                if f["name"].endswith(".pdf")
-                                else f["name"] + ".pdf"
-                            )
-                            st.download_button(
-                                label="⬇️ Télécharger",
-                                data=contenu,
-                                file_name=file_name,
-                                mime="application/pdf",
-                                key=f"dl_{f['id']}_{idx}",
+                    # Création de 3 petites colonnes pour aligner les icônes
+                    c_dl, c_drive, c_sign = st.columns(3)
+
+                    with c_dl:
+                        if _est_autorise():
+                            try:
+                                contenu = telecharger_contenu(service, f["id"])
+                                file_name = (
+                                    f["name"]
+                                    if f["name"].endswith(".pdf")
+                                    else f["name"] + ".pdf"
+                                )
+                                st.download_button(
+                                    label="⬇️",
+                                    help="Télécharger le document",
+                                    data=contenu,
+                                    file_name=file_name,
+                                    mime="application/pdf",
+                                    key=f"dl_{f['id']}_{idx}",
+                                    use_container_width=True,
+                                )
+                            except Exception:
+                                st.caption("⚠️")
+                        else:
+                            st.button(
+                                "🔒",
+                                disabled=True,
+                                key=f"lock_{f['id']}_{idx}",
                                 use_container_width=True,
+                                help="Partagez un document pour débloquer",
                             )
-                        except Exception:
-                            st.caption("⚠️ Indisponible")
-                    else:
-                        st.button(
-                            "🔒 Verrouillé",
-                            disabled=True,
-                            key=f"lock_{f['id']}_{idx}",
-                            use_container_width=True,
-                            help="Partagez un document pour débloquer",
-                        )
 
-                    # 👇 Lien Drive sécurisé (seulement si autorisé) 👇
-                    if _est_autorise() and f.get("webViewLink"):
-                        st.markdown(
-                            f"[🔗 Drive]({f['webViewLink']})",
-                            unsafe_allow_html=False,
-                        )
-
-                    with st.popover("⚠️", use_container_width=True):
-                        st.caption("**Signaler ce document**")
-                        raison = st.selectbox(
-                            "Raison",
-                            [
-                                "Fichier vide / corrompu",
-                                "Hors sujet",
-                                "Contenu inapproprié",
-                                "Doublon",
-                                "Autre",
-                            ],
-                            key=f"raison_{f['id']}_{idx}",
-                        )
-                        details = st.text_area(
-                            "Détails (optionnel)",
-                            key=f"details_{f['id']}_{idx}",
-                        )
-                        if st.button(
-                            "Envoyer le signalement",
-                            key=f"signal_{f['id']}_{idx}",
-                        ):
-                            st.success(
-                                "✅ Signalement enregistré. Merci !"
+                    with c_drive:
+                        if _est_autorise() and f.get("webViewLink"):
+                            st.link_button(
+                                "🔗", 
+                                f['webViewLink'], 
+                                use_container_width=True, 
+                                help="Ouvrir sur Google Drive"
                             )
+
+                    with c_sign:
+                        with st.popover("⚠️", use_container_width=True):
+                            st.caption("**Signaler ce document**")
+                            raison = st.selectbox(
+                                "Raison",
+                                [
+                                    "Fichier vide / corrompu",
+                                    "Hors sujet",
+                                    "Contenu inapproprié",
+                                    "Doublon",
+                                    "Autre",
+                                ],
+                                key=f"raison_{f['id']}_{idx}",
+                            )
+                            details = st.text_area(
+                                "Détails (optionnel)",
+                                key=f"details_{f['id']}_{idx}",
+                            )
+                            if st.button(
+                                "Envoyer le signalement",
+                                key=f"signal_{f['id']}_{idx}",
+                            ):
+                                with st.spinner("Envoi en cours..."):
+                                    succes_email, msg = envoyer_email_signalement(f['name'], raison, details)
+                                    if succes_email:
+                                        st.success("✅ Signalement envoyé à l'administrateur. Merci !")
+                                    else:
+                                        st.error(f"Erreur : {msg}")
 
 # ==========================================
 # PAGE 3 : CONTRIBUTEURS
