@@ -243,7 +243,7 @@ date_creation = datetime.now().strftime("%d/%m/%Y")
 st.markdown(
     f"<div style='text-align: center; color: gray; font-size: 14px;'>"
     f"Développé par <b>OUMAR HASSANA Etudiant en Génie Civil</b> | Créé le :"
-    f" <b>{date_creation}</b>"
+    f" <b>05/11/2026</b>"
     f"</div>",
     unsafe_allow_html=True,
 )
