@@ -28,7 +28,7 @@ TYPES_DOC = [
     "Examen / CC",
 ]
 TAILLE_MAX_MO = 25
-MAX_UPLOADS_PAR_SESSION = 5  # Limite anti-abus par session
+MAX_UPLOADS_PAR_SESSION = 5
 LONGUEUR_MAX_NOM_FICHIER = 80
 
 
@@ -125,6 +125,13 @@ def connecter_google_drive():
         )
         st.stop()
     except Exception as e:
+        if "invalid_grant" in str(e).lower():
+            st.error(
+                "🔑 **Le token Google a expiré.** "
+                "Le gestionnaire doit régénérer le refresh_token "
+                "(voir l'onglet Maintenance)."
+            )
+            st.stop()
         st.error(f"❌ Impossible de se connecter à Google Drive : {e}")
         st.stop()
 
@@ -168,7 +175,7 @@ def uploader_vers_drive(
     part_chapitre = f"_{chapitre}" if chapitre.strip() else ""
     contributeur_clean = contributeur.strip().replace(" ", "_")
 
-    # Troncature du nom original pour éviter les dépassements
+    # Troncature du nom original
     nom_original = uploaded_file.name[:LONGUEUR_MAX_NOM_FICHIER]
 
     nom_fichier = _sanitize(
@@ -229,7 +236,6 @@ def telecharger_contenu(service, file_id: str) -> bytes:
 
 
 def generer_csv_documents(fichiers) -> bytes:
-    """Génère un CSV de la liste des documents pour export."""
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
@@ -260,11 +266,12 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Initialisation de l'état de session
 if "peut_telecharger" not in st.session_state:
     st.session_state["peut_telecharger"] = False
 if "uploads_session" not in st.session_state:
     st.session_state["uploads_session"] = 0
+if "mode_admin" not in st.session_state:
+    st.session_state["mode_admin"] = False
 
 st.markdown(
     """
@@ -315,14 +322,20 @@ with st.sidebar:
     st.caption("Bibliothèque Numérique SJP")
     st.markdown("---")
 
+    # Menu de base
+    options_menu = [
+        "📁 Consulter les documents",
+        "📤 Partager un document",
+        "🏆 Contributeurs",
+    ]
+    
+    # Ajout conditionnel du menu maintenance
+    if st.session_state["mode_admin"]:
+        options_menu.append("ℹ️ Maintenance")
+
     menu = st.radio(
         "Navigation :",
-        [
-            "📁 Consulter les documents",
-            "📤 Partager un document",
-            "🏆 Contributeurs",
-            "ℹ️ Maintenance",
-        ],
+        options_menu,
         label_visibility="collapsed",
     )
 
@@ -382,7 +395,6 @@ if menu == "📤 Partager un document":
         "**Partager un document débloque les téléchargements.**"
     )
 
-    # Vérifier la limite par session
     if st.session_state["uploads_session"] >= MAX_UPLOADS_PAR_SESSION:
         st.warning(
             f"⚠️ Vous avez atteint la limite de "
@@ -396,7 +408,6 @@ if menu == "📤 Partager un document":
             f"/{MAX_UPLOADS_PAR_SESSION}"
         )
 
-        # 👤 Bloc identité (2 champs seulement)
         with st.container(border=True):
             st.markdown("##### 👤 Vos informations")
             col_id1, col_id2 = st.columns(2)
@@ -410,7 +421,6 @@ if menu == "📤 Partager un document":
                     "Niveau *", NIVEAUX, key="niveau_contributeur"
                 )
 
-        # 🎓 Bloc informations du document
         with st.container(border=True):
             st.markdown("##### 🎓 Informations du document")
             col1, col2 = st.columns(2)
@@ -447,7 +457,6 @@ if menu == "📤 Partager un document":
             with col6:
                 type_doc = st.selectbox("Type de document *", TYPES_DOC)
 
-        # 📎 Bloc fichiers
         with st.container(border=True):
             st.markdown("##### 📎 Fichiers PDF")
             uploaded_files = st.file_uploader(
@@ -601,7 +610,6 @@ elif menu == "📁 Consulter les documents":
         )
         st.stop()
 
-    # Statistiques
     stats_niveau = {n: 0 for n in NIVEAUX}
     stats_type = {t: 0 for t in TYPES_DOC}
     for f in fichiers:
@@ -645,7 +653,6 @@ elif menu == "📁 Consulter les documents":
             unsafe_allow_html=True,
         )
 
-    # Bouton d'export CSV
     st.download_button(
         "📥 Exporter la liste en CSV",
         data=generer_csv_documents(fichiers),
@@ -684,6 +691,18 @@ elif menu == "📁 Consulter les documents":
             placeholder="ex: Analyse, Béton, HASSANA...",
             key="f_recherche",
         )
+
+        # 👇 PORTE DÉROBÉE ADMIN 👇
+        mot_de_passe_attendu = st.secrets.get("admin_password", "")
+        if recherche == mot_de_passe_attendu and mot_de_passe_attendu != "":
+            if not st.session_state["mode_admin"]:
+                st.session_state["mode_admin"] = True
+                st.success("🔓 Mode Administrateur activé ! L'onglet Maintenance est apparu dans le menu.")
+                st.rerun()
+        
+        # Si c'est le mot de passe, on vide la recherche pour ne pas filtrer les documents
+        if recherche == mot_de_passe_attendu and mot_de_passe_attendu != "":
+            recherche = ""
 
     fichiers_filtres = []
     for f in fichiers:
@@ -754,7 +773,6 @@ elif menu == "📁 Consulter les documents":
                     )
                     st.caption("  ·  ".join(meta_parts))
 
-                    # 👁️ Aperçu du PDF
                     if f.get("webViewLink"):
                         with st.expander("👁️ Aperçu du document"):
                             apercu_url = (
@@ -803,7 +821,6 @@ elif menu == "📁 Consulter les documents":
                             unsafe_allow_html=False,
                         )
 
-                    # ⚠️ Signalement
                     with st.popover("⚠️", use_container_width=True):
                         st.caption("**Signaler ce document**")
                         raison = st.selectbox(
@@ -826,9 +843,7 @@ elif menu == "📁 Consulter les documents":
                             key=f"signal_{f['id']}_{idx}",
                         ):
                             st.success(
-                                "✅ Signalement enregistré. Merci ! "
-                                "(Notez le nom du fichier pour le "
-                                "vérifier manuellement dans le Drive.)"
+                                "✅ Signalement enregistré. Merci !"
                             )
 
 # ==========================================
@@ -850,7 +865,6 @@ elif menu == "🏆 Contributeurs":
         st.info("Aucun contributeur pour le moment.")
         st.stop()
 
-    # Compter les contributions par personne
     contributions = {}
     for f in fichiers:
         nom = _extraire_contributeur(f["name"])
@@ -861,7 +875,6 @@ elif menu == "🏆 Contributeurs":
         st.info("Aucun contributeur identifié pour le moment.")
         st.stop()
 
-    # Classement
     classement = sorted(
         contributions.items(), key=lambda x: x[1], reverse=True
     )
@@ -887,7 +900,6 @@ elif menu == "🏆 Contributeurs":
 
     st.markdown("---")
 
-    # Résumé
     c1, c2 = st.columns(2)
     with c1:
         st.metric("Total contributeurs", len(contributions))
@@ -897,84 +909,46 @@ elif menu == "🏆 Contributeurs":
         )
 
 # ==========================================
-# PAGE 4 : MAINTENANCE
+# PAGE 4 : MAINTENANCE (ADMIN UNIQUEMENT)
 # ==========================================
 elif menu == "ℹ️ Maintenance":
     st.subheader("ℹ️ Maintenance & informations")
-    st.caption(
-        "Notes pour le gestionnaire de la plateforme."
-    )
+    st.caption("Notes privées pour le gestionnaire de la plateforme.")
 
     st.markdown("### 🔑 Régénération du `refresh_token` OAuth")
     st.markdown(
         """
-        Si l'application affiche une erreur `invalid_grant` ou ne peut plus
-        accéder à Google Drive, c'est que le `refresh_token` a expiré ou
-        été révoqué.
+        Si l'application affiche une erreur `invalid_grant`, c'est que le 
+        `refresh_token` a expiré.
 
-        **Procédure en 4 étapes :**
-
-        1. Aller sur le
-           [OAuth 2.0 Playground](https://developers.google.com/oauthplayground/)
-        2. Cliquer sur ⚙️ en haut à droite → cocher
-           *Use your own OAuth credentials*
-        3. Coller ton **Client ID** et **Client Secret**
-        4. Dans le champ de gauche, ajouter le scope
-           `https://www.googleapis.com/auth/drive`
-           → Authorize APIs → connexion Google → échange le code
-        5. Copier le **Refresh token** généré
-
-        **Mise à jour des secrets :**
-
-        - **Local** : modifier `.streamlit/secrets.toml`
-        - **Streamlit Cloud** : aller dans *Settings → Secrets* et coller
-          la nouvelle valeur
-
-        L'application redémarre automatiquement.
+        **Procédure :**
+        1. Aller sur [OAuth 2.0 Playground](https://developers.google.com/oauthplayground/)
+        2. ⚙️ → *Use your own OAuth credentials*
+        3. Coller Client ID et Client Secret
+        4. Scope : `https://www.googleapis.com/auth/drive`
+        5. Authorize → Copier le nouveau Refresh token
+        6. Mettre à jour les secrets Streamlit Cloud.
         """
     )
 
     st.markdown("---")
-
     st.markdown("### 🗂️ Dossier Drive")
     st.code(f"ID : {DOSSIER_DRIVE_ID}")
-    st.caption(
-        "Tous les fichiers partagés sont stockés dans ce dossier Drive."
-    )
 
     st.markdown("---")
-
     st.markdown("### 📊 Statistiques techniques")
     try:
         fichiers = lister_fichiers_drive()
-        total_octets = sum(
-            int(f.get("size", 0) or 0) for f in fichiers
-        )
+        total_octets = sum(int(f.get("size", 0) or 0) for f in fichiers)
         st.metric("Nombre de fichiers", len(fichiers))
         st.metric("Taille totale", _formater_taille(total_octets))
-        st.metric(
-            "Nombre de contributeurs",
-            len({
-                _extraire_contributeur(f["name"])
-                for f in fichiers
-                if _extraire_contributeur(f["name"])
-            }),
-        )
     except Exception as e:
         st.error(f"Impossible de récupérer les statistiques : {e}")
 
     st.markdown("---")
-
-    st.markdown("### 🔒 Configuration actuelle")
-    st.markdown(
-        f"""
-        - **Limite de partage par session** : `{MAX_UPLOADS_PAR_SESSION}`
-        - **Taille max par fichier** : `{TAILLE_MAX_MO} Mo`
-        - **Niveaux** : `{', '.join(NIVEAUX)}`
-        - **Filières** : `{', '.join(FILIERES)}`
-        - **Types de documents** : `{', '.join(TYPES_DOC)}`
-        """
-    )
+    if st.button("Se déconnecter du mode Admin"):
+        st.session_state["mode_admin"] = False
+        st.rerun()
 
 # ==========================================
 # PIED DE PAGE
@@ -982,7 +956,7 @@ elif menu == "ℹ️ Maintenance":
 st.markdown("---")
 st.markdown(
     "<div class='footer'>"
-    "Nous contacter : <b>haoumar@univ-catho-sjd.com</b> Développé par <b>ØH</b> le <b>05/11/2026</b>"
+    "Développé par <b>ØH</b> le <b>05/11/2026</b>"
     "</div>",
     unsafe_allow_html=True,
 )
