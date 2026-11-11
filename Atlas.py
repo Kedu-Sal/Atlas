@@ -1,4 +1,5 @@
 from datetime import datetime
+import csv
 import io
 import re
 import streamlit as st
@@ -27,6 +28,8 @@ TYPES_DOC = [
     "Examen / CC",
 ]
 TAILLE_MAX_MO = 25
+MAX_UPLOADS_PAR_SESSION = 5  # Limite anti-abus par session
+LONGUEUR_MAX_NOM_FICHIER = 80
 
 
 # ==========================================
@@ -57,6 +60,13 @@ def _extraire_type(nom: str) -> str:
     for t in TYPES_DOC:
         if t in nom:
             return t
+    return ""
+
+
+def _extraire_contributeur(nom: str) -> str:
+    match = re.search(r"_PAR_([^_]+)_", nom)
+    if match:
+        return match.group(1).replace("_", " ")
     return ""
 
 
@@ -136,7 +146,8 @@ def fichier_existe(service, nom_fichier: str) -> bool:
 
 
 def uploader_vers_drive(
-    uploaded_file, matiere, niveau, filiere, chapitre, annee, type_doc
+    uploaded_file, contributeur, niveau, filiere, matiere, chapitre,
+    annee, type_doc
 ):
     contenu = uploaded_file.getvalue()
 
@@ -155,10 +166,14 @@ def uploader_vers_drive(
     service = connecter_google_drive()
     part_filiere = f"_{filiere}" if filiere else ""
     part_chapitre = f"_{chapitre}" if chapitre.strip() else ""
+    contributeur_clean = contributeur.strip().replace(" ", "_")
+
+    # Troncature du nom original pour éviter les dépassements
+    nom_original = uploaded_file.name[:LONGUEUR_MAX_NOM_FICHIER]
 
     nom_fichier = _sanitize(
         f"[{niveau}]{part_filiere}_{matiere}{part_chapitre}_{annee}_"
-        f"{type_doc}_{uploaded_file.name}"
+        f"{type_doc}_PAR_{contributeur_clean}_{nom_original}"
     )
 
     if fichier_existe(service, nom_fichier):
@@ -213,6 +228,28 @@ def telecharger_contenu(service, file_id: str) -> bytes:
     return request.execute()
 
 
+def generer_csv_documents(fichiers) -> bytes:
+    """Génère un CSV de la liste des documents pour export."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Nom du fichier", "Niveau", "Année", "Type",
+        "Contributeur", "Taille", "Date de création", "Lien Drive"
+    ])
+    for f in fichiers:
+        writer.writerow([
+            f["name"],
+            _extraire_niveau(f["name"]),
+            _extraire_annee(f["name"]),
+            _extraire_type(f["name"]),
+            _extraire_contributeur(f["name"]),
+            _formater_taille(f.get("size")),
+            _formater_date(f.get("createdTime", "")),
+            f.get("webViewLink", ""),
+        ])
+    return output.getvalue().encode("utf-8-sig")
+
+
 # ==========================================
 # CONFIGURATION DE LA PAGE
 # ==========================================
@@ -226,8 +263,9 @@ st.set_page_config(
 # Initialisation de l'état de session
 if "peut_telecharger" not in st.session_state:
     st.session_state["peut_telecharger"] = False
+if "uploads_session" not in st.session_state:
+    st.session_state["uploads_session"] = 0
 
-# CSS personnalisé
 st.markdown(
     """
     <style>
@@ -279,13 +317,17 @@ with st.sidebar:
 
     menu = st.radio(
         "Navigation :",
-        ["📁 Consulter les documents", "📤 Partager un document"],
+        [
+            "📁 Consulter les documents",
+            "📤 Partager un document",
+            "🏆 Contributeurs",
+            "ℹ️ Maintenance",
+        ],
         label_visibility="collapsed",
     )
 
     st.markdown("---")
 
-    # Statut de déblocage dans la sidebar
     if _est_autorise():
         st.success("✅ Téléchargements débloqués")
     else:
@@ -336,130 +378,178 @@ st.markdown(
 if menu == "📤 Partager un document":
     st.subheader("📤 Partager un nouveau document")
     st.caption(
-        "Remplissez les informations ci-dessous, puis sélectionnez un ou "
-        "plusieurs fichiers PDF. **Partager un document débloque les "
-        "téléchargements.**"
+        "Remplissez vos informations et celles du document. "
+        "**Partager un document débloque les téléchargements.**"
     )
 
-    with st.container(border=True):
-        st.markdown("##### 🎓 Informations académiques")
-        col1, col2 = st.columns(2)
-        with col1:
-            niveau = st.selectbox("Niveau *", NIVEAUX)
-        with col2:
-            filiere = ""
-            if niveau in ["SJP3", "SJP4", "SJP5"]:
-                filiere = st.selectbox("Filière *", FILIERES)
-            else:
-                st.text_input(
-                    "Filière", value="— Non requise —", disabled=True
-                )
-
-        col3, col4 = st.columns(2)
-        with col3:
-            matiere = st.text_input(
-                "Matière *", placeholder="ex: Béton Armé, RDM, Algorithmique"
-            )
-        with col4:
-            annee = st.text_input(
-                "Année académique *", placeholder="ex: 2025-2026"
-            )
-
-        col5, col6 = st.columns(2)
-        with col5:
-            chapitre = st.text_input(
-                "Chapitre / Partie (optionnel)",
-                placeholder="ex: Chapitre 1, Module 2",
-            )
-        with col6:
-            type_doc = st.selectbox("Type de document *", TYPES_DOC)
-
-    with st.container(border=True):
-        st.markdown("##### 📎 Fichiers PDF")
-        uploaded_files = st.file_uploader(
-            "Sélectionnez un ou plusieurs fichiers PDF",
-            type=["pdf"],
-            accept_multiple_files=True,
-            label_visibility="collapsed",
+    # Vérifier la limite par session
+    if st.session_state["uploads_session"] >= MAX_UPLOADS_PAR_SESSION:
+        st.warning(
+            f"⚠️ Vous avez atteint la limite de "
+            f"{MAX_UPLOADS_PAR_SESSION} partages par session. "
+            "Merci pour votre contribution !"
+        )
+    else:
+        st.caption(
+            f"📊 Partages cette session : "
+            f"{st.session_state['uploads_session']}"
+            f"/{MAX_UPLOADS_PAR_SESSION}"
         )
 
-        if uploaded_files:
-            st.markdown(
-                f"**{len(uploaded_files)} fichier(s) sélectionné(s) :**"
+        # 👤 Bloc identité (2 champs seulement)
+        with st.container(border=True):
+            st.markdown("##### 👤 Vos informations")
+            col_id1, col_id2 = st.columns(2)
+            with col_id1:
+                contributeur = st.text_input(
+                    "Nom et Prénom *",
+                    placeholder="ex: HASSANA Oumar",
+                )
+            with col_id2:
+                niveau_contributeur = st.selectbox(
+                    "Niveau *", NIVEAUX, key="niveau_contributeur"
+                )
+
+        # 🎓 Bloc informations du document
+        with st.container(border=True):
+            st.markdown("##### 🎓 Informations du document")
+            col1, col2 = st.columns(2)
+            with col1:
+                niveau = st.selectbox(
+                    "Niveau du document *", NIVEAUX, key="niveau_doc"
+                )
+            with col2:
+                filiere = ""
+                if niveau in ["SJP3", "SJP4", "SJP5"]:
+                    filiere = st.selectbox("Filière *", FILIERES)
+                else:
+                    st.text_input(
+                        "Filière", value="— Non requise —", disabled=True
+                    )
+
+            col3, col4 = st.columns(2)
+            with col3:
+                matiere = st.text_input(
+                    "Matière *",
+                    placeholder="ex: Béton Armé, RDM, Algorithmique",
+                )
+            with col4:
+                annee = st.text_input(
+                    "Année académique *", placeholder="ex: 2025-2026"
+                )
+
+            col5, col6 = st.columns(2)
+            with col5:
+                chapitre = st.text_input(
+                    "Chapitre / Partie (optionnel)",
+                    placeholder="ex: Chapitre 1, Module 2",
+                )
+            with col6:
+                type_doc = st.selectbox("Type de document *", TYPES_DOC)
+
+        # 📎 Bloc fichiers
+        with st.container(border=True):
+            st.markdown("##### 📎 Fichiers PDF")
+            uploaded_files = st.file_uploader(
+                "Sélectionnez un ou plusieurs fichiers PDF",
+                type=["pdf"],
+                accept_multiple_files=True,
+                label_visibility="collapsed",
             )
-            for f in uploaded_files:
-                taille_mo = len(f.getvalue()) / (1024 * 1024)
-                emoji = "⚠️" if taille_mo > TAILLE_MAX_MO else "✅"
-                st.caption(f"{emoji} {f.name} — {taille_mo:.2f} Mo")
 
-    submit_button = st.button(
-        "🚀 Envoyer les documents", type="primary", use_container_width=True
-    )
-
-    if submit_button:
-        if not uploaded_files:
-            st.warning("⚠️ Sélectionnez au moins un fichier PDF.")
-        elif not matiere.strip():
-            st.warning("⚠️ Renseignez le nom de la matière.")
-        elif not annee.strip():
-            st.warning("⚠️ Renseignez l'année académique.")
-        else:
-            succes, erreurs = [], []
-            progress = st.progress(0, text="Téléversement en cours...")
-
-            for i, uploaded_file in enumerate(uploaded_files):
-                progress.progress(
-                    (i + 1) / len(uploaded_files),
-                    text=f"Traitement de {uploaded_file.name}...",
+            if uploaded_files:
+                st.markdown(
+                    f"**{len(uploaded_files)} fichier(s) sélectionné(s) :**"
                 )
-                try:
-                    lien, nom_final = uploader_vers_drive(
-                        uploaded_file,
-                        matiere.strip(),
-                        niveau,
-                        filiere,
-                        chapitre,
-                        annee.strip(),
-                        type_doc,
-                    )
-                    succes.append((nom_final, lien))
-                except Exception as e:
-                    erreurs.append((uploaded_file.name, str(e)))
+                for f in uploaded_files:
+                    taille_mo = len(f.getvalue()) / (1024 * 1024)
+                    emoji = "⚠️" if taille_mo > TAILLE_MAX_MO else "✅"
+                    st.caption(f"{emoji} {f.name} — {taille_mo:.2f} Mo")
 
-            progress.empty()
-            lister_fichiers_drive.clear()
+        submit_button = st.button(
+            "🚀 Envoyer les documents",
+            type="primary",
+            use_container_width=True,
+        )
 
-            # 🔓 Débloquer les téléchargements si au moins 1 upload a réussi
-            if succes:
-                _debloquer_telechargement()
+        if submit_button:
+            erreurs_validation = []
+            if not contributeur.strip():
+                erreurs_validation.append("votre nom et prénom")
+            if not uploaded_files:
+                erreurs_validation.append("au moins un fichier PDF")
+            if not matiere.strip():
+                erreurs_validation.append("la matière")
+            if not annee.strip():
+                erreurs_validation.append("l'année académique")
 
-            if succes:
-                st.success(
-                    f"✅ {len(succes)} fichier(s) uploadé(s) avec succès !"
+            if erreurs_validation:
+                st.warning(
+                    "⚠️ Veuillez renseigner : "
+                    + ", ".join(erreurs_validation)
+                    + "."
                 )
-                if _est_autorise():
-                    st.balloons()
-                    st.info(
-                        "🎉 **Téléchargements débloqués !** Vous pouvez "
-                        "maintenant télécharger tous les documents de la "
-                        "bibliothèque."
-                    )
-                st.markdown("### 📎 Fichiers envoyés")
-                for nom_f, lien_f in succes:
-                    st.markdown(f"- 📄 [{nom_f}]({lien_f})")
+            else:
+                succes, erreurs = [], []
+                progress = st.progress(0, text="Téléversement en cours...")
 
-            if erreurs:
-                st.error(f"❌ {len(erreurs)} fichier(s) en échec :")
-                for nom_f, msg in erreurs:
-                    st.markdown(f"- **{nom_f}** : {msg}")
+                for i, uploaded_file in enumerate(uploaded_files):
+                    progress.progress(
+                        (i + 1) / len(uploaded_files),
+                        text=f"Traitement de {uploaded_file.name}...",
+                    )
+                    try:
+                        lien, nom_final = uploader_vers_drive(
+                            uploaded_file,
+                            contributeur.strip(),
+                            niveau,
+                            filiere,
+                            matiere.strip(),
+                            chapitre,
+                            annee.strip(),
+                            type_doc,
+                        )
+                        succes.append((nom_final, lien))
+                    except Exception as e:
+                        erreurs.append((uploaded_file.name, str(e)))
+
+                progress.empty()
+                lister_fichiers_drive.clear()
+
+                if succes:
+                    _debloquer_telechargement()
+                    st.session_state["uploads_session"] += len(succes)
+
+                if succes:
+                    premier_mot = (
+                        contributeur.strip().split()[0].capitalize()
+                    )
+                    st.success(
+                        f"✅ Merci {premier_mot} ! "
+                        f"{len(succes)} fichier(s) uploadé(s) avec succès."
+                    )
+                    if _est_autorise():
+                        st.balloons()
+                        st.info(
+                            "🎉 **Téléchargements débloqués !** Vous "
+                            "pouvez maintenant télécharger tous les "
+                            "documents."
+                        )
+                    st.markdown("### 📎 Fichiers envoyés")
+                    for nom_f, lien_f in succes:
+                        st.markdown(f"- 📄 [{nom_f}]({lien_f})")
+
+                if erreurs:
+                    st.error(f"❌ {len(erreurs)} fichier(s) en échec :")
+                    for nom_f, msg in erreurs:
+                        st.markdown(f"- **{nom_f}** : {msg}")
 
 # ==========================================
 # PAGE 2 : CONSULTER LES DOCUMENTS
 # ==========================================
-else:
+elif menu == "📁 Consulter les documents":
     st.subheader("📁 Consulter les documents")
 
-    # 🔐 Bandeau d'état verrouillé / débloqué
     if not _est_autorise():
         st.markdown(
             """
@@ -498,7 +588,6 @@ else:
             unsafe_allow_html=True,
         )
 
-    # Récupération des fichiers
     try:
         fichiers = lister_fichiers_drive()
     except Exception as e:
@@ -556,6 +645,15 @@ else:
             unsafe_allow_html=True,
         )
 
+    # Bouton d'export CSV
+    st.download_button(
+        "📥 Exporter la liste en CSV",
+        data=generer_csv_documents(fichiers),
+        file_name=f"atlas_documents_{datetime.now():%Y%m%d}.csv",
+        mime="text/csv",
+        use_container_width=False,
+    )
+
     st.markdown("---")
 
     # Filtres
@@ -582,31 +680,26 @@ else:
             )
 
         recherche = st.text_input(
-            "🔎 Recherche libre (matière, chapitre, mot-clé...)",
-            placeholder="ex: Analyse, Béton, Chapitre 2...",
+            "🔎 Recherche libre (matière, chapitre, contributeur...)",
+            placeholder="ex: Analyse, Béton, HASSANA...",
             key="f_recherche",
         )
 
-    # Application des filtres
     fichiers_filtres = []
     for f in fichiers:
         nom = f["name"]
 
         if choix_niveau != "Tous" and f"[{choix_niveau}]" not in nom:
             continue
-
         if choix_filiere != "Toutes" and choix_filiere not in nom:
             continue
-
         if choix_type != "Tous" and choix_type not in nom:
             continue
-
         if recherche.strip() and recherche.lower() not in nom.lower():
             continue
 
         fichiers_filtres.append(f)
 
-    # Tri
     if choix_tri == "Plus récents":
         fichiers_filtres.sort(
             key=lambda x: x.get("createdTime", ""), reverse=True
@@ -650,6 +743,9 @@ else:
                     type_doc_trouve = _extraire_type(f["name"])
                     if type_doc_trouve:
                         meta_parts.append(f"🏷️ {type_doc_trouve}")
+                    contributeur = _extraire_contributeur(f["name"])
+                    if contributeur:
+                        meta_parts.append(f"👤 {contributeur}")
                     meta_parts.append(
                         f"💾 {_formater_taille(f.get('size'))}"
                     )
@@ -657,6 +753,21 @@ else:
                         f"📅 {_formater_date(f.get('createdTime', ''))}"
                     )
                     st.caption("  ·  ".join(meta_parts))
+
+                    # 👁️ Aperçu du PDF
+                    if f.get("webViewLink"):
+                        with st.expander("👁️ Aperçu du document"):
+                            apercu_url = (
+                                f"https://drive.google.com/file/d/"
+                                f"{f['id']}/preview"
+                            )
+                            st.markdown(
+                                f'<iframe src="{apercu_url}" '
+                                f'width="100%" height="500" '
+                                f'style="border:none;border-radius:8px;">'
+                                f'</iframe>',
+                                unsafe_allow_html=True,
+                            )
 
                 with col_action:
                     if _est_autorise():
@@ -692,13 +803,186 @@ else:
                             unsafe_allow_html=False,
                         )
 
+                    # ⚠️ Signalement
+                    with st.popover("⚠️", use_container_width=True):
+                        st.caption("**Signaler ce document**")
+                        raison = st.selectbox(
+                            "Raison",
+                            [
+                                "Fichier vide / corrompu",
+                                "Hors sujet",
+                                "Contenu inapproprié",
+                                "Doublon",
+                                "Autre",
+                            ],
+                            key=f"raison_{f['id']}_{idx}",
+                        )
+                        details = st.text_area(
+                            "Détails (optionnel)",
+                            key=f"details_{f['id']}_{idx}",
+                        )
+                        if st.button(
+                            "Envoyer le signalement",
+                            key=f"signal_{f['id']}_{idx}",
+                        ):
+                            st.success(
+                                "✅ Signalement enregistré. Merci ! "
+                                "(Notez le nom du fichier pour le "
+                                "vérifier manuellement dans le Drive.)"
+                            )
+
+# ==========================================
+# PAGE 3 : CONTRIBUTEURS
+# ==========================================
+elif menu == "🏆 Contributeurs":
+    st.subheader("🏆 Contributeurs de la bibliothèque")
+    st.caption(
+        "Merci à tous les étudiants qui enrichissent cette bibliothèque !"
+    )
+
+    try:
+        fichiers = lister_fichiers_drive()
+    except Exception as e:
+        st.error(f"Erreur lors de la récupération : {e}")
+        st.stop()
+
+    if not fichiers:
+        st.info("Aucun contributeur pour le moment.")
+        st.stop()
+
+    # Compter les contributions par personne
+    contributions = {}
+    for f in fichiers:
+        nom = _extraire_contributeur(f["name"])
+        if nom:
+            contributions[nom] = contributions.get(nom, 0) + 1
+
+    if not contributions:
+        st.info("Aucun contributeur identifié pour le moment.")
+        st.stop()
+
+    # Classement
+    classement = sorted(
+        contributions.items(), key=lambda x: x[1], reverse=True
+    )
+
+    st.markdown("### 🥇 Classement des contributeurs")
+    for rang, (nom, count) in enumerate(classement, start=1):
+        if rang == 1:
+            medaille = "🥇"
+        elif rang == 2:
+            medaille = "🥈"
+        elif rang == 3:
+            medaille = "🥉"
+        else:
+            medaille = f"#{rang}"
+
+        with st.container(border=True):
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                st.markdown(f"### {medaille}")
+            with col2:
+                st.markdown(f"**{nom}**")
+                st.caption(f"📄 {count} document(s) partagé(s)")
+
+    st.markdown("---")
+
+    # Résumé
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("Total contributeurs", len(contributions))
+    with c2:
+        st.metric(
+            "Total documents partagés", sum(contributions.values())
+        )
+
+# ==========================================
+# PAGE 4 : MAINTENANCE
+# ==========================================
+elif menu == "ℹ️ Maintenance":
+    st.subheader("ℹ️ Maintenance & informations")
+    st.caption(
+        "Notes pour le gestionnaire de la plateforme."
+    )
+
+    st.markdown("### 🔑 Régénération du `refresh_token` OAuth")
+    st.markdown(
+        """
+        Si l'application affiche une erreur `invalid_grant` ou ne peut plus
+        accéder à Google Drive, c'est que le `refresh_token` a expiré ou
+        été révoqué.
+
+        **Procédure en 4 étapes :**
+
+        1. Aller sur le
+           [OAuth 2.0 Playground](https://developers.google.com/oauthplayground/)
+        2. Cliquer sur ⚙️ en haut à droite → cocher
+           *Use your own OAuth credentials*
+        3. Coller ton **Client ID** et **Client Secret**
+        4. Dans le champ de gauche, ajouter le scope
+           `https://www.googleapis.com/auth/drive`
+           → Authorize APIs → connexion Google → échange le code
+        5. Copier le **Refresh token** généré
+
+        **Mise à jour des secrets :**
+
+        - **Local** : modifier `.streamlit/secrets.toml`
+        - **Streamlit Cloud** : aller dans *Settings → Secrets* et coller
+          la nouvelle valeur
+
+        L'application redémarre automatiquement.
+        """
+    )
+
+    st.markdown("---")
+
+    st.markdown("### 🗂️ Dossier Drive")
+    st.code(f"ID : {DOSSIER_DRIVE_ID}")
+    st.caption(
+        "Tous les fichiers partagés sont stockés dans ce dossier Drive."
+    )
+
+    st.markdown("---")
+
+    st.markdown("### 📊 Statistiques techniques")
+    try:
+        fichiers = lister_fichiers_drive()
+        total_octets = sum(
+            int(f.get("size", 0) or 0) for f in fichiers
+        )
+        st.metric("Nombre de fichiers", len(fichiers))
+        st.metric("Taille totale", _formater_taille(total_octets))
+        st.metric(
+            "Nombre de contributeurs",
+            len({
+                _extraire_contributeur(f["name"])
+                for f in fichiers
+                if _extraire_contributeur(f["name"])
+            }),
+        )
+    except Exception as e:
+        st.error(f"Impossible de récupérer les statistiques : {e}")
+
+    st.markdown("---")
+
+    st.markdown("### 🔒 Configuration actuelle")
+    st.markdown(
+        f"""
+        - **Limite de partage par session** : `{MAX_UPLOADS_PAR_SESSION}`
+        - **Taille max par fichier** : `{TAILLE_MAX_MO} Mo`
+        - **Niveaux** : `{', '.join(NIVEAUX)}`
+        - **Filières** : `{', '.join(FILIERES)}`
+        - **Types de documents** : `{', '.join(TYPES_DOC)}`
+        """
+    )
+
 # ==========================================
 # PIED DE PAGE
 # ==========================================
 st.markdown("---")
 st.markdown(
     "<div class='footer'>"
-    "Développé par <b>ØH</b> &nbsp;|&nbsp; Date : <b>le 05/11/2026</b>"
+    "Nous contacter : <b>haoumar@univ-catho-sjd.com</b> Développé par <b>ØH</b> le <b>05/11/2026</b>"
     "</div>",
     unsafe_allow_html=True,
 )
