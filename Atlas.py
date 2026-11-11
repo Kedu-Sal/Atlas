@@ -553,6 +553,7 @@ if menu == "📤 Partager un document":
                     for nom_f, msg in erreurs:
                         st.markdown(f"- **{nom_f}** : {msg}")
 
+st.write("TEST SECRET :", st.secrets.get("admin_password", "ERREUR - NON TROUVÉ"))
 # ==========================================
 # PAGE 2 : CONSULTER LES DOCUMENTS
 # ==========================================
