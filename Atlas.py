@@ -33,7 +33,6 @@ TAILLE_MAX_MO = 25
 # FONCTIONS UTILITAIRES
 # ==========================================
 def _sanitize(nom: str) -> str:
-    """Retire les caractères interdits pour les noms de fichiers Drive."""
     nom = nom.strip()
     nom = re.sub(r'[\\/:*?"<>|]', "-", nom)
     nom = re.sub(r"\s+", " ", nom)
@@ -41,7 +40,6 @@ def _sanitize(nom: str) -> str:
 
 
 def _est_vrai_pdf(contenu: bytes) -> bool:
-    """Vérifie que le fichier commence par la signature PDF."""
     return contenu.startswith(b"%PDF-")
 
 
@@ -86,12 +84,19 @@ def _formater_date(iso_date: str) -> str:
         return iso_date[:10]
 
 
+def _debloquer_telechargement():
+    st.session_state["peut_telecharger"] = True
+
+
+def _est_autorise() -> bool:
+    return st.session_state.get("peut_telecharger", False)
+
+
 # ==========================================
 # CONNEXION GOOGLE DRIVE (OAUTH)
 # ==========================================
 @st.cache_resource
 def connecter_google_drive():
-    """Connexion via OAuth (compte Google du propriétaire du dossier)."""
     try:
         o = st.secrets["oauth"]
         creds = Credentials(
@@ -106,8 +111,7 @@ def connecter_google_drive():
     except KeyError:
         st.error(
             "❌ Configuration manquante : la section `[oauth]` n'existe pas "
-            "dans les secrets. Vérifie ton fichier `secrets.toml` ou les "
-            "secrets Streamlit Cloud."
+            "dans les secrets."
         )
         st.stop()
     except Exception as e:
@@ -134,7 +138,6 @@ def fichier_existe(service, nom_fichier: str) -> bool:
 def uploader_vers_drive(
     uploaded_file, matiere, niveau, filiere, chapitre, annee, type_doc
 ):
-    """Envoie un fichier PDF sur Google Drive avec un nom structuré."""
     contenu = uploaded_file.getvalue()
 
     if not _est_vrai_pdf(contenu):
@@ -180,7 +183,6 @@ def uploader_vers_drive(
 
 @st.cache_data(ttl=60, show_spinner=False)
 def lister_fichiers_drive():
-    """Récupère la liste des fichiers du dossier Drive (cache 60 s)."""
     service = connecter_google_drive()
     query = f"'{DOSSIER_DRIVE_ID}' in parents and trashed = false"
     fichiers = []
@@ -221,11 +223,14 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# CSS personnalisé pour une interface plus soignée
+# Initialisation de l'état de session
+if "peut_telecharger" not in st.session_state:
+    st.session_state["peut_telecharger"] = False
+
+# CSS personnalisé
 st.markdown(
     """
     <style>
-    /* En-tête principal */
     .main-title {
         text-align: center;
         padding: 1rem 0;
@@ -234,16 +239,8 @@ st.markdown(
         border-radius: 12px;
         margin-bottom: 1.5rem;
     }
-    .main-title h1 {
-        margin: 0;
-        font-size: 2rem;
-    }
-    .main-title p {
-        margin: 0.3rem 0 0 0;
-        opacity: 0.9;
-        font-size: 0.95rem;
-    }
-    /* Cartes statistiques */
+    .main-title h1 { margin: 0; font-size: 2rem; }
+    .main-title p { margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.95rem; }
     .stat-card {
         background: #f8fafc;
         border: 1px solid #e2e8f0;
@@ -256,24 +253,11 @@ st.markdown(
         font-weight: bold;
         color: #1e3a8a;
     }
-    .stat-card .label {
-        color: #64748b;
-        font-size: 0.85rem;
-    }
-    /* Cartes de documents */
-    .doc-card {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 1rem;
-        margin-bottom: 0.6rem;
-    }
-    /* Bouton primaire */
+    .stat-card .label { color: #64748b; font-size: 0.85rem; }
     .stButton > button[kind="primary"] {
         background: linear-gradient(90deg, #1e3a8a, #3b82f6);
         border: none;
     }
-    /* Footer */
     .footer {
         text-align: center;
         color: #94a3b8;
@@ -301,7 +285,14 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Statistiques rapides dans la sidebar
+    # Statut de déblocage dans la sidebar
+    if _est_autorise():
+        st.success("✅ Téléchargements débloqués")
+    else:
+        st.warning("🔒 Téléchargements verrouillés")
+
+    st.markdown("---")
+
     try:
         fichiers_sidebar = lister_fichiers_drive()
         nb_total = len(fichiers_sidebar)
@@ -346,7 +337,8 @@ if menu == "📤 Partager un document":
     st.subheader("📤 Partager un nouveau document")
     st.caption(
         "Remplissez les informations ci-dessous, puis sélectionnez un ou "
-        "plusieurs fichiers PDF."
+        "plusieurs fichiers PDF. **Partager un document débloque les "
+        "téléchargements.**"
     )
 
     with st.container(border=True):
@@ -398,9 +390,7 @@ if menu == "📤 Partager un document":
             for f in uploaded_files:
                 taille_mo = len(f.getvalue()) / (1024 * 1024)
                 emoji = "⚠️" if taille_mo > TAILLE_MAX_MO else "✅"
-                st.caption(
-                    f"{emoji} {f.name} — {taille_mo:.2f} Mo"
-                )
+                st.caption(f"{emoji} {f.name} — {taille_mo:.2f} Mo")
 
     submit_button = st.button(
         "🚀 Envoyer les documents", type="primary", use_container_width=True
@@ -437,13 +427,23 @@ if menu == "📤 Partager un document":
                     erreurs.append((uploaded_file.name, str(e)))
 
             progress.empty()
-            # Invalider le cache pour refléter les nouveaux fichiers
             lister_fichiers_drive.clear()
+
+            # 🔓 Débloquer les téléchargements si au moins 1 upload a réussi
+            if succes:
+                _debloquer_telechargement()
 
             if succes:
                 st.success(
                     f"✅ {len(succes)} fichier(s) uploadé(s) avec succès !"
                 )
+                if _est_autorise():
+                    st.balloons()
+                    st.info(
+                        "🎉 **Téléchargements débloqués !** Vous pouvez "
+                        "maintenant télécharger tous les documents de la "
+                        "bibliothèque."
+                    )
                 st.markdown("### 📎 Fichiers envoyés")
                 for nom_f, lien_f in succes:
                     st.markdown(f"- 📄 [{nom_f}]({lien_f})")
@@ -459,7 +459,46 @@ if menu == "📤 Partager un document":
 else:
     st.subheader("📁 Consulter les documents")
 
-    # Statistiques en haut
+    # 🔐 Bandeau d'état verrouillé / débloqué
+    if not _est_autorise():
+        st.markdown(
+            """
+            <div style="
+                background: linear-gradient(90deg, #fef3c7, #fde68a);
+                border-left: 5px solid #f59e0b;
+                padding: 1rem 1.2rem;
+                border-radius: 10px;
+                margin-bottom: 1rem;
+            ">
+                <h4 style="margin:0; color:#92400e;">🔒 Accès verrouillé</h4>
+                <p style="margin:0.4rem 0 0 0; color:#78350f;">
+                    Pour télécharger un document, vous devez d'abord
+                    <b>partager au moins un document</b>.<br>
+                    👉 Allez dans l'onglet <b>📤 Partager un document</b>.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div style="
+                background: linear-gradient(90deg, #d1fae5, #a7f3d0);
+                border-left: 5px solid #10b981;
+                padding: 0.8rem 1.2rem;
+                border-radius: 10px;
+                margin-bottom: 1rem;
+            ">
+                <b style="color:#065f46;">✅ Téléchargements débloqués</b>
+                <span style="color:#047857;"> — merci pour votre
+                contribution !</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # Récupération des fichiers
     try:
         fichiers = lister_fichiers_drive()
     except Exception as e:
@@ -473,7 +512,7 @@ else:
         )
         st.stop()
 
-    # Calcul des statistiques
+    # Statistiques
     stats_niveau = {n: 0 for n in NIVEAUX}
     stats_type = {t: 0 for t in TYPES_DOC}
     for f in fichiers:
@@ -620,23 +659,32 @@ else:
                     st.caption("  ·  ".join(meta_parts))
 
                 with col_action:
-                    try:
-                        contenu = telecharger_contenu(service, f["id"])
-                        file_name = (
-                            f["name"]
-                            if f["name"].endswith(".pdf")
-                            else f["name"] + ".pdf"
-                        )
-                        st.download_button(
-                            label="⬇️ Télécharger",
-                            data=contenu,
-                            file_name=file_name,
-                            mime="application/pdf",
-                            key=f"dl_{f['id']}_{idx}",
+                    if _est_autorise():
+                        try:
+                            contenu = telecharger_contenu(service, f["id"])
+                            file_name = (
+                                f["name"]
+                                if f["name"].endswith(".pdf")
+                                else f["name"] + ".pdf"
+                            )
+                            st.download_button(
+                                label="⬇️ Télécharger",
+                                data=contenu,
+                                file_name=file_name,
+                                mime="application/pdf",
+                                key=f"dl_{f['id']}_{idx}",
+                                use_container_width=True,
+                            )
+                        except Exception:
+                            st.caption("⚠️ Indisponible")
+                    else:
+                        st.button(
+                            "🔒 Verrouillé",
+                            disabled=True,
+                            key=f"lock_{f['id']}_{idx}",
                             use_container_width=True,
+                            help="Partagez un document pour débloquer",
                         )
-                    except Exception:
-                        st.caption("⚠️ Indisponible")
 
                     if f.get("webViewLink"):
                         st.markdown(
@@ -650,7 +698,7 @@ else:
 st.markdown("---")
 st.markdown(
     "<div class='footer'>"
-    "Développé par <b>ØH</b> &nbsp;|&nbsp; <b>le 05/11/2026</b>"
+    "Développé par <b>ØH</b> &nbsp;|&nbsp; Date : <b>le 05/11/2026</b>"
     "</div>",
     unsafe_allow_html=True,
 )
